@@ -1,5 +1,13 @@
-import ChatApp from "../components/chat-app";
+import DirectMessagesPage from "../components/direct-messages-page";
+import PageFrame from "../components/page-frame";
+import SessionGate from "../components/session-gate";
 
-export default function DirectMessagesPage() {
-  return <ChatApp />;
+export default function DirectMessageDirectoryRoute() {
+  return (
+    <SessionGate>
+      <PageFrame>
+        <DirectMessagesPage />
+      </PageFrame>
+    </SessionGate>
+  );
 }
