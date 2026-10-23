@@ -2,9 +2,15 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Avatar from "./avatar";
 import { useSession } from "./session-gate";
+import {
+  extractUsernames,
+  request,
+  type Conversation,
+  type Room,
+} from "../lib/chat-api";
 
 type PageFrameProps = {
   children: ReactNode;
@@ -13,6 +19,63 @@ type PageFrameProps = {
 export default function PageFrame({ children }: PageFrameProps) {
   const { session, signOut } = useSession();
   const router = useRouter();
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [usernames, setUsernames] = useState<string[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    const loadSidebarData = async () => {
+      const [roomResult, conversationResult] = await Promise.allSettled([
+        request<Room[]>("/rooms", session.token),
+        request<Conversation[]>("/dm", session.token),
+      ]);
+
+      if (!active) return;
+
+      if (roomResult.status === "fulfilled") setRooms(roomResult.value);
+      if (conversationResult.status === "fulfilled") {
+        setConversations(conversationResult.value);
+      }
+
+      try {
+        let directory: unknown;
+        try {
+          directory = await request<unknown>("/users", session.token);
+        } catch {
+          directory = await request<unknown>("/users?search=", session.token);
+        }
+
+        if (active) {
+          const conversationNames =
+            conversationResult.status === "fulfilled"
+              ? conversationResult.value.map((conversation) => conversation.username)
+              : [];
+          setUsernames(
+            [...new Set([...extractUsernames(directory), ...conversationNames])]
+              .filter((name) => name.toLowerCase() !== session.username.toLowerCase())
+              .sort((a, b) => a.localeCompare(b)),
+          );
+        }
+      } catch {
+        if (active && conversationResult.status === "fulfilled") {
+          setUsernames(
+            conversationResult.value
+              .map((conversation) => conversation.username)
+              .filter((name) => name.toLowerCase() !== session.username.toLowerCase())
+              .sort((a, b) => a.localeCompare(b)),
+          );
+        }
+      }
+    };
+
+    void loadSidebarData();
+    const timer = window.setInterval(loadSidebarData, 10000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [session.token]);
 
   function handleSignOut() {
     signOut();
@@ -48,28 +111,55 @@ export default function PageFrame({ children }: PageFrameProps) {
             </Link>
           </div>
           <div className="nav-list">
-            <Link className="nav-row nav-main" href="/rooms">
-              <span className="hash">#</span>
-              <span>All rooms</span>
-            </Link>
+            {rooms.map((room) => (
+              <Link
+                className="nav-row nav-main"
+                href={`/rooms/${room.id}`}
+                key={room.id}
+              >
+                <span className="hash">#</span>
+                <span>{room.name}</span>
+              </Link>
+            ))}
+            {!rooms.length && <div className="empty-sidebar">No rooms yet.</div>}
           </div>
         </nav>
 
-        <nav className="side-section dm-section">
-          <div className="section-heading">
-            <Link className="chat-room-home-link" href="/conversations">
-              MESSAGES
-            </Link>
-          </div>
+        <div className="side-section dm-section">
           <div className="nav-list">
-            <Link className="nav-row nav-main" href="/direct-messages">
-              <span className="dm-name">All usernames</span>
-            </Link>
-            <Link className="nav-row nav-main" href="/conversations">
-              <span className="dm-name">Conversations</span>
-            </Link>
+            <div className="section-heading">
+              <Link className="chat-room-home-link" href="/direct-messages">
+                USERNAMES
+              </Link>
+            </div>
+            {usernames.map((name) => (
+              <div className="nav-row" key={name}>
+                <Avatar name={name} small />
+                <span className="dm-name">{name}</span>
+              </div>
+            ))}
+            {!usernames.length && <div className="empty-sidebar">No users found.</div>}
+
+            <div className="section-heading" style={{ marginTop: 18 }}>
+              <Link className="chat-room-home-link" href="/conversations">
+                CONVERSATIONS
+              </Link>
+            </div>
+            {conversations.map((conversation) => (
+              <Link
+                className="nav-row nav-main"
+                href={`/conversations/${encodeURIComponent(conversation.username)}`}
+                key={conversation.username}
+              >
+                <Avatar name={conversation.username} small />
+                <span className="dm-name">{conversation.username}</span>
+              </Link>
+            ))}
+            {!conversations.length && (
+              <div className="empty-sidebar">No conversations yet.</div>
+            )}
           </div>
-        </nav>
+        </div>
 
         <div className="side-spacer" />
         <button type="button" className="sidebar-signout" onClick={handleSignOut}>

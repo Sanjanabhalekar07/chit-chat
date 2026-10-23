@@ -1,14 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import Avatar from "./avatar";
 import { extractUsernames, request, type Conversation } from "../lib/chat-api";
 import { useSession } from "./session-gate";
 
 export default function DirectMessagesPage() {
   const { session } = useSession();
-  const router = useRouter();
   const [users, setUsers] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
@@ -96,10 +94,8 @@ export default function DirectMessagesPage() {
           }}
         >
           {visibleUsers.map((person) => (
-            <button
-              type="button"
+            <div
               key={person}
-              onClick={() => router.push(`/conversations/${encodeURIComponent(person)}`)}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -111,14 +107,11 @@ export default function DirectMessagesPage() {
                 borderRadius: 5,
                 background: "#191d18",
                 color: "#eef0e5",
-                textAlign: "left",
-                cursor: "pointer",
               }}
             >
               <Avatar name={person} />
               <strong style={{ flex: 1 }}>@{person}</strong>
-              <span style={{ color: "#c5f36a" }}>Message →</span>
-            </button>
+            </div>
           ))}
         </div>
       ) : (

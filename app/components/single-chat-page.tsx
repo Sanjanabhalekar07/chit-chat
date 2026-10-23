@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { createPortal } from "react-dom";
 import Avatar from "./avatar";
 import { request, type Message, type Room } from "../lib/chat-api";
 import { useSession } from "./session-gate";
@@ -17,6 +18,9 @@ export default function SingleChatPage({ roomId, username }: SingleChatPageProps
   const [messages, setMessages] = useState<Message[]>([]);
   const [title, setTitle] = useState(username || "Chat");
   const [draft, setDraft] = useState("");
+  const [composeTo, setComposeTo] = useState<string | null>(null);
+  const [quickDraft, setQuickDraft] = useState("");
+  const [directSent, setDirectSent] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
@@ -119,6 +123,42 @@ export default function SingleChatPage({ roomId, username }: SingleChatPageProps
     }
   }
 
+  async function sendDirectMessage(event: FormEvent) {
+    event.preventDefault();
+    const recipient = composeTo;
+    if (!recipient || !quickDraft.trim()) return;
+    if (recipient.toLowerCase() === session.username.toLowerCase()) {
+      setError("You can’t send a direct message to yourself.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    try {
+      await request<Message>(
+        `/dm/${encodeURIComponent(recipient)}`,
+        session.token,
+        {
+          method: "POST",
+          body: JSON.stringify({ body: quickDraft.trim() }),
+        },
+      );
+      setQuickDraft("");
+      setDirectSent(true);
+    } catch (sendError) {
+      setError((sendError as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openMessagePopup(recipient: string) {
+    setQuickDraft("");
+    setDirectSent(false);
+    setError("");
+    setComposeTo(recipient);
+  }
+
   return (
     <>
       <div className="conversation-head">
@@ -136,7 +176,162 @@ export default function SingleChatPage({ roomId, username }: SingleChatPageProps
         )}
       </div>
 
-      {error && <p className="notice-bar">{error}</p>}
+      {error && !composeTo && <p className="notice-bar">{error}</p>}
+
+      {composeTo &&
+        createPortal(
+        <div
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !busy) {
+              setComposeTo(null);
+            }
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 50,
+            display: "grid",
+            placeItems: "center",
+            padding: 20,
+            background: "rgba(0, 0, 0, 0.68)",
+          }}
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="message-user-title"
+            onSubmit={sendDirectMessage}
+            style={{
+              width: "min(100%, 460px)",
+              padding: 24,
+              border: "1px solid #3a4135",
+              borderRadius: 8,
+              background: "#191d18",
+              color: "#eef0e5",
+              boxShadow: "0 24px 70px #0009",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 18,
+              }}
+            >
+              <h2 id="message-user-title" style={{ margin: 0, fontSize: 20 }}>
+                Message @{composeTo}
+              </h2>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => setComposeTo(null)}
+                disabled={busy}
+                style={{
+                  border: 0,
+                  background: "transparent",
+                  color: "#aab29d",
+                  fontSize: 22,
+                  cursor: "pointer",
+                }}
+              >
+                ×
+              </button>
+            </div>
+            {error && (
+              <p role="alert" className="notice error-notice">
+                {error}
+              </p>
+            )}
+            <label
+              htmlFor="direct-message-body"
+              style={{
+                display: "block",
+                marginBottom: 8,
+                color: "#aab29d",
+                fontSize: 12,
+              }}
+            >
+              Your message
+            </label>
+            <textarea
+              id="direct-message-body"
+              autoFocus
+              required
+              rows={4}
+              value={quickDraft}
+              onChange={(event) => {
+                setQuickDraft(event.target.value);
+                setDirectSent(false);
+              }}
+              placeholder={`Write a message to @${composeTo}…`}
+              style={{
+                width: "100%",
+                minHeight: 100,
+                padding: 12,
+                resize: "vertical",
+                border: "1px solid #3a4135",
+                borderRadius: 4,
+                background: "#111410",
+                color: "#eef0e5",
+                fontSize: 13,
+              }}
+            />
+            {directSent && (
+              <p
+                role="status"
+                style={{ margin: "8px 0 0", color: "#c5f36a", fontSize: 11 }}
+              >
+                Message sent to @{composeTo}.
+              </p>
+            )}
+            {composeTo.toLowerCase() === session.username.toLowerCase() && (
+              <p style={{ margin: "8px 0 0", color: "#969d8e", fontSize: 11 }}>
+                This is your account, so a direct message can’t be sent to it.
+              </p>
+            )}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: 10,
+                marginTop: 20,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setComposeTo(null)}
+                disabled={busy}
+                style={{
+                  minHeight: 40,
+                  padding: "0 14px",
+                  border: "1px solid #3a4135",
+                  borderRadius: 4,
+                  background: "transparent",
+                  color: "#d0d5c8",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="primary-button"
+                disabled={
+                  busy ||
+                  !quickDraft.trim() ||
+                  composeTo.toLowerCase() === session.username.toLowerCase()
+                }
+              >
+                {busy ? "Sending…" : `Send to @${composeTo}`}
+              </button>
+            </div>
+          </form>
+        </div>
+        ,
+        document.body,
+      )}
 
       <div className="messages-scroll">
         {messages.length === 0 ? (
@@ -154,7 +349,25 @@ export default function SingleChatPage({ roomId, username }: SingleChatPageProps
                 <Avatar name={message.sender} small />
                 <div className="message-content">
                   <div className="message-byline">
-                    <strong>{message.sender === session.username ? "You" : message.sender}</strong>
+                    {message.sender === session.username && !roomId ? (
+                      <strong>You</strong>
+                    ) : (
+                      <button
+                        type="button"
+                        className="message-user-link"
+                        aria-label={`Send a direct message to ${message.sender}`}
+                        aria-haspopup="dialog"
+                        title={`Message @${message.sender}`}
+                        onClick={() => openMessagePopup(message.sender)}
+                        style={{
+                          cursor: "pointer",
+                          textDecoration: "underline",
+                          textUnderlineOffset: 3,
+                        }}
+                      >
+                        {message.sender}
+                      </button>
+                    )}
                     <time>
                       {new Date(message.created_at).toLocaleTimeString([], {
                         hour: "numeric",
