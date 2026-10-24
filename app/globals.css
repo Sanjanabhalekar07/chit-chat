@@ -90,4 +90,5 @@ body{background:#111410;color:#f1f0e9;font-family:Arial,Helvetica,sans-serif}
 .dm-unread-count{flex:0 0 auto;min-width:18px;height:18px;padding:0 5px;display:inline-flex;align-items:center;justify-content:center;border-radius:9px;background:#351d1d;color:#ff4d4f;font-size:10px;font-weight:750;letter-spacing:0}
 .message-user-menu button:last-child,.block-user-action{color:#ff4d4f}
 .message-user-menu button:last-child:hover,.block-user-action:hover{border-color:#6d3434;background:#351d1d;color:#ff7779}
+@media(max-width:680px){.sidebar.sidebar-visible{display:none}}
 

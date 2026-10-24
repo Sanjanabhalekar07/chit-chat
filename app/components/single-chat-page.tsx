@@ -453,6 +453,12 @@ export default function SingleChatPage({ roomId, username }: SingleChatPageProps
           <textarea
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
             placeholder={`Write a message to ${roomId ? `#${title}` : title}…`}
             rows={1}
           />

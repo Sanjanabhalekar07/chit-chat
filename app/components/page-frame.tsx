@@ -31,6 +31,9 @@ export default function PageFrame({ children }: PageFrameProps) {
   const [readMarkers, setReadMarkers] = useState<Record<string, string>>({});
   const [readMarkersLoaded, setReadMarkersLoaded] = useState(false);
   const [unreadMessageCounts, setUnreadMessageCounts] = useState<Record<string, number>>({});
+  const [roomReadMarkers, setRoomReadMarkers] = useState<Record<string, string>>({});
+  const [roomReadMarkersLoaded, setRoomReadMarkersLoaded] = useState(false);
+  const [roomUnreadCounts, setRoomUnreadCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
     try {
@@ -40,6 +43,14 @@ export default function PageFrame({ children }: PageFrameProps) {
       setReadMarkers({});
     }
     setReadMarkersLoaded(true);
+
+    try {
+      const saved = window.localStorage.getItem("little-talk-room-read-markers");
+      if (saved) setRoomReadMarkers(JSON.parse(saved) as Record<string, string>);
+    } catch {
+      setRoomReadMarkers({});
+    }
+    setRoomReadMarkersLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -134,7 +145,33 @@ export default function PageFrame({ children }: PageFrameProps) {
   }, [conversations, pathname, readMarkersLoaded, session.username]);
 
   useEffect(() => {
-    if (!readMarkersLoaded || !conversations.length) {
+    if (!readMarkersLoaded || !conversations.length) return;
+
+    setReadMarkers((current) => {
+      const next = { ...current };
+      let changed = false;
+      conversations.forEach((conversation) => {
+        if (
+          !Object.prototype.hasOwnProperty.call(next, conversation.username) &&
+          conversation.last_message
+        ) {
+          next[conversation.username] = conversation.last_message.created_at;
+          changed = true;
+        }
+      });
+      if (!changed) return current;
+      window.localStorage.setItem("little-talk-dm-read-markers", JSON.stringify(next));
+      return next;
+    });
+  }, [conversations, readMarkersLoaded]);
+
+  useEffect(() => {
+    const markersReady = conversations.every(
+      (conversation) =>
+        !conversation.last_message ||
+        Object.prototype.hasOwnProperty.call(readMarkers, conversation.username),
+    );
+    if (!readMarkersLoaded || !conversations.length || !markersReady) {
       setUnreadMessageCounts({});
       return;
     }
@@ -174,6 +211,97 @@ export default function PageFrame({ children }: PageFrameProps) {
     };
   }, [conversations, readMarkers, readMarkersLoaded, session.token, session.username]);
 
+  useEffect(() => {
+    if (!roomReadMarkersLoaded || !pathname.startsWith("/rooms/")) return;
+    const roomId = Number(pathname.slice("/rooms/".length).split("/")[0]);
+    if (!Number.isInteger(roomId) || roomId <= 0) return;
+
+    let active = true;
+    request<Message[]>(`/rooms/${roomId}/messages`, session.token)
+      .then((messages) => {
+        if (!active || !messages.length) return;
+        const latest = messages.reduce((timestamp, message) =>
+          message.created_at > timestamp ? message.created_at : timestamp,
+        "");
+        const key = String(roomId);
+        setRoomReadMarkers((current) => {
+          if ((current[key] || "") >= latest) return current;
+          const next = { ...current, [key]: latest };
+          window.localStorage.setItem("little-talk-room-read-markers", JSON.stringify(next));
+          return next;
+        });
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
+  }, [pathname, roomReadMarkersLoaded, session.token]);
+
+  useEffect(() => {
+    if (!roomReadMarkersLoaded || !rooms.length) {
+      setRoomUnreadCounts({});
+      return;
+    }
+
+    let active = true;
+    const loadRoomUnreadCounts = async () => {
+      const results = await Promise.allSettled(
+        rooms.map(async (room) => {
+          const key = String(room.id);
+          const lastReadAt = roomReadMarkers[key] || "";
+          const isFirstCheck = !Object.prototype.hasOwnProperty.call(roomReadMarkers, key);
+          const after = !isFirstCheck && lastReadAt
+            ? `?after=${encodeURIComponent(
+                new Date(Math.max(0, Date.parse(lastReadAt) - 2000)).toISOString(),
+              )}`
+            : "";
+          const messages = await request<Message[]>(
+            `/rooms/${room.id}/messages${after}`,
+            session.token,
+          );
+          if (isFirstCheck) {
+            const latest = messages.reduce(
+              (timestamp, message) =>
+                message.created_at > timestamp ? message.created_at : timestamp,
+              "",
+            );
+            return [key, 0, latest, true] as const;
+          }
+          const count = messages.filter(
+            (message) =>
+              message.sender.toLowerCase() !== session.username.toLowerCase() &&
+              message.created_at > lastReadAt,
+          ).length;
+          return [key, count, lastReadAt, false] as const;
+        }),
+      );
+
+      if (!active) return;
+      const next: Record<string, number> = {};
+      const baselines: Record<string, string> = {};
+      results.forEach((result) => {
+        if (result.status !== "fulfilled") return;
+        const [key, count, latest, isFirstCheck] = result.value;
+        if (count > 0) next[key] = count;
+        if (isFirstCheck) baselines[key] = latest;
+      });
+      setRoomUnreadCounts(next);
+      if (Object.keys(baselines).length) {
+        setRoomReadMarkers((current) => {
+          const updated = { ...current, ...baselines };
+          window.localStorage.setItem("little-talk-room-read-markers", JSON.stringify(updated));
+          return updated;
+        });
+      }
+    };
+
+    void loadRoomUnreadCounts();
+    return () => {
+      active = false;
+    };
+  }, [rooms, roomReadMarkers, roomReadMarkersLoaded, session.token, session.username]);
+
   const unreadMessageTotal = Object.values(unreadMessageCounts).reduce(
     (total, count) => total + count,
     0,
@@ -204,7 +332,7 @@ export default function PageFrame({ children }: PageFrameProps) {
 
   return (
     <main className="app-shell">
-      <aside className="sidebar sidebar-visible">
+      <aside className="sidebar">
         <div className="side-brand-wrap">
           <div className="side-brand">
             <Link className="brand-home" href="/">
@@ -239,6 +367,16 @@ export default function PageFrame({ children }: PageFrameProps) {
               >
                 <span className="hash">#</span>
                 <span>{room.name}</span>
+                {(roomUnreadCounts[String(room.id)] || 0) > 0 && (
+                  <span
+                    className="dm-unread-count"
+                    aria-label={`${roomUnreadCounts[String(room.id)]} new messages`}
+                  >
+                    {roomUnreadCounts[String(room.id)] > 9
+                      ? "9+"
+                      : roomUnreadCounts[String(room.id)]}
+                  </span>
+                )}
               </Link>
             ))}
             {!rooms.length && <div className="empty-sidebar">No rooms yet.</div>}
