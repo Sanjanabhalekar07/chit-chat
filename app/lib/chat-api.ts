@@ -1,4 +1,4 @@
-export const API = "https://chatapp.adnecto.in/api";
+export const API = "/api-proxy";
 
 export type Session = { username: string; token: string };
 export type Room = { id: number; name: string; created_by: string; created_at: string };
