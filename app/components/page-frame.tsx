@@ -34,6 +34,11 @@ export default function PageFrame({ children }: PageFrameProps) {
   const [roomReadMarkers, setRoomReadMarkers] = useState<Record<string, string>>({});
   const [roomReadMarkersLoaded, setRoomReadMarkersLoaded] = useState(false);
   const [roomUnreadCounts, setRoomUnreadCounts] = useState<Record<string, number>>({});
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     try {
@@ -332,7 +337,15 @@ export default function PageFrame({ children }: PageFrameProps) {
 
   return (
     <main className="app-shell">
-      <aside className="sidebar">
+      <aside
+        id="app-sidebar"
+        className={`sidebar${sidebarOpen ? " sidebar-open" : ""}`}
+        onClick={(event) => {
+          if (event.target instanceof Element && event.target.closest("a")) {
+            setSidebarOpen(false);
+          }
+        }}
+      >
         <div className="side-brand-wrap">
           <div className="side-brand">
             <Link className="brand-home" href="/">
@@ -455,8 +468,27 @@ export default function PageFrame({ children }: PageFrameProps) {
         </div>
       </aside>
 
+      {sidebarOpen && (
+        <button
+          type="button"
+          className="mobile-sidebar-backdrop"
+          aria-label="Close navigation menu"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       <section className="chat-panel">
         <header className="topbar">
+          <button
+            type="button"
+            className="mobile-menu-toggle"
+            aria-label={sidebarOpen ? "Hide navigation menu" : "Show navigation menu"}
+            aria-expanded={sidebarOpen}
+            aria-controls="app-sidebar"
+            onClick={() => setSidebarOpen((open) => !open)}
+          >
+            <span aria-hidden="true">{"\u2630"}</span>
+          </button>
           <Link className="mobile-brand" href="/rooms">
             ‹ Chat Room
           </Link>
