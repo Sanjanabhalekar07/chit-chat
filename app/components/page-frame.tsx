@@ -311,6 +311,9 @@ export default function PageFrame({ children }: PageFrameProps) {
     (total, count) => total + count,
     0,
   );
+  const mobileUnreadTotal =
+    unreadMessageTotal +
+    Object.values(roomUnreadCounts).reduce((total, count) => total + count, 0);
 
   function handleSignOut() {
     signOut();
@@ -482,12 +485,21 @@ export default function PageFrame({ children }: PageFrameProps) {
           <button
             type="button"
             className="mobile-menu-toggle"
-            aria-label={sidebarOpen ? "Hide navigation menu" : "Show navigation menu"}
+            aria-label={
+              `${sidebarOpen ? "Hide" : "Show"} navigation menu${
+                mobileUnreadTotal ? `, ${mobileUnreadTotal} new messages` : ""
+              }`
+            }
             aria-expanded={sidebarOpen}
             aria-controls="app-sidebar"
             onClick={() => setSidebarOpen((open) => !open)}
           >
             <span aria-hidden="true">{"\u2630"}</span>
+            {mobileUnreadTotal > 0 && (
+              <span className="mobile-menu-unread-count" aria-hidden="true">
+                {mobileUnreadTotal > 9 ? "9+" : mobileUnreadTotal}
+              </span>
+            )}
           </button>
           <Link className="mobile-brand" href="/rooms">
             ‹ Chat Room
