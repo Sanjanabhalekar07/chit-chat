@@ -308,16 +308,6 @@ export default function RoomsPage({ home = false }: RoomsPageProps) {
                     Created by @{room.created_by}
                   </small>
                 </div>
-                {room.created_by === session.username && (
-                  <button
-                    type="button"
-                    onClick={() => void deleteRoom(room)}
-                    style={{ position: "relative", pointerEvents: "auto" }}
-                  >
-                    Delete
-                  </button>
-                )}
-                <span className="room-open-button">Open room →</span>
               </div>
             </div>
           ))}

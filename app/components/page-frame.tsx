@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import Avatar from "./avatar";
 import { useSession } from "./session-gate";
@@ -9,6 +9,7 @@ import {
   extractUsernames,
   request,
   type Conversation,
+  type Message,
   type Room,
 } from "../lib/chat-api";
 
@@ -19,16 +20,35 @@ type PageFrameProps = {
 export default function PageFrame({ children }: PageFrameProps) {
   const { session, signOut } = useSession();
   const router = useRouter();
+  const pathname = usePathname();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [usernames, setUsernames] = useState<string[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
+  const [updatingBlockedUser, setUpdatingBlockedUser] = useState<string | null>(null);
+  const [blockedUsersError, setBlockedUsersError] = useState("");
+  const [sidebarNotice, setSidebarNotice] = useState("");
+  const [readMarkers, setReadMarkers] = useState<Record<string, string>>({});
+  const [readMarkersLoaded, setReadMarkersLoaded] = useState(false);
+  const [unreadMessageCounts, setUnreadMessageCounts] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("little-talk-dm-read-markers");
+      if (saved) setReadMarkers(JSON.parse(saved) as Record<string, string>);
+    } catch {
+      setReadMarkers({});
+    }
+    setReadMarkersLoaded(true);
+  }, []);
 
   useEffect(() => {
     let active = true;
     const loadSidebarData = async () => {
-      const [roomResult, conversationResult] = await Promise.allSettled([
+      const [roomResult, conversationResult, blockedResult] = await Promise.allSettled([
         request<Room[]>("/rooms", session.token),
         request<Conversation[]>("/dm", session.token),
+        request<unknown>("/blocks", session.token),
       ]);
 
       if (!active) return;
@@ -36,6 +56,16 @@ export default function PageFrame({ children }: PageFrameProps) {
       if (roomResult.status === "fulfilled") setRooms(roomResult.value);
       if (conversationResult.status === "fulfilled") {
         setConversations(conversationResult.value);
+      }
+      if (blockedResult.status === "fulfilled") {
+        setBlockedUsers(
+          [...new Set(extractUsernames(blockedResult.value))]
+            .filter((name) => name.toLowerCase() !== session.username.toLowerCase())
+            .sort((a, b) => a.localeCompare(b)),
+        );
+        setBlockedUsersError("");
+      } else {
+        setBlockedUsersError("Blocked users could not be loaded.");
       }
 
       try {
@@ -77,9 +107,99 @@ export default function PageFrame({ children }: PageFrameProps) {
     };
   }, [session.token]);
 
+  useEffect(() => {
+    if (!readMarkersLoaded || !pathname.startsWith("/conversations/")) return;
+
+    const encodedUsername = pathname.slice("/conversations/".length);
+    let activeUsername: string;
+    try {
+      activeUsername = decodeURIComponent(encodedUsername);
+    } catch {
+      return;
+    }
+
+    const conversation = conversations.find(
+      (item) => item.username.toLowerCase() === activeUsername.toLowerCase(),
+    );
+    const latest = conversation?.last_message;
+    const conversationUsername = conversation?.username;
+    if (!conversationUsername || !latest) return;
+
+    setReadMarkers((current) => {
+      if ((current[conversationUsername] || "") >= latest.created_at) return current;
+      const next = { ...current, [conversationUsername]: latest.created_at };
+      window.localStorage.setItem("little-talk-dm-read-markers", JSON.stringify(next));
+      return next;
+    });
+  }, [conversations, pathname, readMarkersLoaded, session.username]);
+
+  useEffect(() => {
+    if (!readMarkersLoaded || !conversations.length) {
+      setUnreadMessageCounts({});
+      return;
+    }
+
+    let active = true;
+    const loadUnreadCounts = async () => {
+      const results = await Promise.allSettled(
+        conversations.map(async (conversation) => {
+          const messages = await request<Message[]>(
+            `/dm/${encodeURIComponent(conversation.username)}`,
+            session.token,
+          );
+          const lastReadAt = readMarkers[conversation.username] || "";
+          const unreadCount = messages.filter(
+            (message) =>
+              message.sender.toLowerCase() !== session.username.toLowerCase() &&
+              message.created_at > lastReadAt,
+          ).length;
+          return [conversation.username, unreadCount] as const;
+        }),
+      );
+
+      if (!active) return;
+      const next: Record<string, number> = {};
+      results.forEach((result) => {
+        if (result.status === "fulfilled") {
+          const [conversationUsername, count] = result.value;
+          if (count > 0) next[conversationUsername] = count;
+        }
+      });
+      setUnreadMessageCounts(next);
+    };
+
+    void loadUnreadCounts();
+    return () => {
+      active = false;
+    };
+  }, [conversations, readMarkers, readMarkersLoaded, session.token, session.username]);
+
+  const unreadMessageTotal = Object.values(unreadMessageCounts).reduce(
+    (total, count) => total + count,
+    0,
+  );
+
   function handleSignOut() {
     signOut();
     router.push("/");
+  }
+
+  async function unblockUser(username: string) {
+    setUpdatingBlockedUser(username);
+    setSidebarNotice("");
+    try {
+      await request(`/blocks/${encodeURIComponent(username)}`, session.token, {
+        method: "DELETE",
+      });
+      setBlockedUsers((current) =>
+        current.filter((name) => name.toLowerCase() !== username.toLowerCase()),
+      );
+      setSidebarNotice(`@${username} unblocked.`);
+    } catch (unblockError) {
+      setSidebarNotice((unblockError as Error).message || "Could not unblock user.");
+    } finally {
+      setUpdatingBlockedUser(null);
+    }
   }
 
   return (
@@ -127,23 +247,15 @@ export default function PageFrame({ children }: PageFrameProps) {
 
         <div className="side-section dm-section">
           <div className="nav-list">
-            <div className="section-heading">
-              <Link className="chat-room-home-link" href="/direct-messages">
-                USERNAMES
-              </Link>
-            </div>
-            {usernames.map((name) => (
-              <div className="nav-row" key={name}>
-                <Avatar name={name} small />
-                <span className="dm-name">{name}</span>
-              </div>
-            ))}
-            {!usernames.length && <div className="empty-sidebar">No users found.</div>}
-
-            <div className="section-heading" style={{ marginTop: 18 }}>
+            <div className="section-heading" style={{ marginTop: 10 }}>
               <Link className="chat-room-home-link" href="/conversations">
-                CONVERSATIONS
+                DIRECT MESSAGES
               </Link>
+              {unreadMessageTotal > 0 && (
+                <span className="dm-unread-count" aria-label={`${unreadMessageTotal} unread messages`}>
+                  {unreadMessageTotal}
+                </span>
+              )}
             </div>
             {conversations.map((conversation) => (
               <Link
@@ -153,15 +265,50 @@ export default function PageFrame({ children }: PageFrameProps) {
               >
                 <Avatar name={conversation.username} small />
                 <span className="dm-name">{conversation.username}</span>
+                {(unreadMessageCounts[conversation.username] || 0) > 0 && (
+                  <span className="dm-unread-count" aria-label={`${unreadMessageCounts[conversation.username]} unread messages`}>
+                    {unreadMessageCounts[conversation.username]}
+                  </span>
+                )}
               </Link>
             ))}
             {!conversations.length && (
               <div className="empty-sidebar">No conversations yet.</div>
             )}
+
+            <div className="blocked-users-box">
+              <div className="section-heading">
+                <span>BLOCKED USERS</span>
+              </div>
+              {blockedUsersError ? (
+                <p className="empty-sidebar">{blockedUsersError}</p>
+              ) : blockedUsers.length ? (
+                blockedUsers.map((name) => (
+                  <div className="blocked-sidebar-row" key={name}>
+                    <Avatar name={name} small />
+                    <span className="dm-name">{name}</span>
+                    <button
+                      type="button"
+                      disabled={updatingBlockedUser !== null}
+                      onClick={() => void unblockUser(name)}
+                    >
+                      {updatingBlockedUser === name ? "…" : "Unblock"}
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <p className="empty-sidebar">No blocked users.</p>
+              )}
+            </div>
           </div>
         </div>
 
         <div className="side-spacer" />
+        {sidebarNotice && (
+          <p role="status" className="sidebar-notice">
+            {sidebarNotice}
+          </p>
+        )}
         <button type="button" className="sidebar-signout" onClick={handleSignOut}>
           <span className="sidebar-signout-label">Sign out</span>
         </button>

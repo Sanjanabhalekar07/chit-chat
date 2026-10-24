@@ -20,7 +20,8 @@ export default function SingleChatPage({ roomId, username }: SingleChatPageProps
   const [draft, setDraft] = useState("");
   const [composeTo, setComposeTo] = useState<string | null>(null);
   const [quickDraft, setQuickDraft] = useState("");
-  const [directSent, setDirectSent] = useState(false);
+  const [directSuccess, setDirectSuccess] = useState("");
+  const [openUserMenu, setOpenUserMenu] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
@@ -51,14 +52,18 @@ export default function SingleChatPage({ roomId, username }: SingleChatPageProps
         const data = await request<Message[]>(`${path}${suffix}`, session.token);
         if (!active) return;
 
-        if (!cursor) {
-          setMessages(data);
-        } else {
-          setMessages((existing) => [
-            ...existing,
-            ...data.filter((message) => !existing.some((item) => item.id === message.id)),
-          ]);
-        }
+        setMessages((existing) => {
+          const next = cursor
+            ? [
+                ...existing,
+                ...data.filter((message) => !existing.some((item) => item.id === message.id)),
+              ]
+            : data;
+          const unchanged =
+            next.length === existing.length &&
+            next.every((message, index) => message.id === existing[index]?.id);
+          return unchanged ? existing : next;
+        });
 
         if (data.length) {
           cursor = data.reduce(
@@ -83,8 +88,37 @@ export default function SingleChatPage({ roomId, username }: SingleChatPageProps
   }, [path, roomId, session.token]);
 
   useEffect(() => {
+    if (!messages.length) return;
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    if (openUserMenu === null) return;
+
+    function closeOnOutsideClick(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Element && !target.closest(".message-user-menu-wrap")) {
+        setOpenUserMenu(null);
+      }
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpenUserMenu(null);
+    }
+
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [openUserMenu]);
+
+  useEffect(() => {
+    if (!directSuccess) return;
+    const timer = window.setTimeout(() => setDirectSuccess(""), 3500);
+    return () => window.clearTimeout(timer);
+  }, [directSuccess]);
 
   async function send(event: FormEvent) {
     event.preventDefault();
@@ -110,13 +144,14 @@ export default function SingleChatPage({ roomId, username }: SingleChatPageProps
     }
   }
 
-  async function block() {
-    if (!username) return;
+  async function block(target = username) {
+    if (!target) return;
 
     try {
-      await request(`/blocks/${encodeURIComponent(username)}`, session.token, {
+      await request(`/blocks/${encodeURIComponent(target)}`, session.token, {
         method: "POST",
       });
+      setOpenUserMenu(null);
       router.push("/conversations");
     } catch (blockError) {
       setError((blockError as Error).message);
@@ -144,7 +179,8 @@ export default function SingleChatPage({ roomId, username }: SingleChatPageProps
         },
       );
       setQuickDraft("");
-      setDirectSent(true);
+      setComposeTo(null);
+      setDirectSuccess("Message sent successfully.");
     } catch (sendError) {
       setError((sendError as Error).message);
     } finally {
@@ -154,7 +190,7 @@ export default function SingleChatPage({ roomId, username }: SingleChatPageProps
 
   function openMessagePopup(recipient: string) {
     setQuickDraft("");
-    setDirectSent(false);
+    setDirectSuccess("");
     setError("");
     setComposeTo(recipient);
   }
@@ -170,12 +206,36 @@ export default function SingleChatPage({ roomId, username }: SingleChatPageProps
           </div>
         </div>
         {username && (
-          <button className="soft-action" onClick={() => void block()}>
-            Block user
+          <button className="soft-action block-user-action" onClick={() => void block()}>
+            Block User
           </button>
         )}
       </div>
 
+      {directSuccess &&
+        createPortal(
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              position: "fixed",
+              top: 24,
+              right: 24,
+              zIndex: 200,
+              padding: "14px 20px",
+              border: "1px solid #52683b",
+              borderRadius: 8,
+              background: "#28321f",
+              color: "#d4f3a6",
+              boxShadow: "0 12px 36px #0008",
+              fontSize: 14,
+              fontWeight: 600,
+            }}
+          >
+            {directSuccess}
+          </div>,
+          document.body,
+        )}
       {error && !composeTo && <p className="notice-bar">{error}</p>}
 
       {composeTo &&
@@ -263,7 +323,6 @@ export default function SingleChatPage({ roomId, username }: SingleChatPageProps
               value={quickDraft}
               onChange={(event) => {
                 setQuickDraft(event.target.value);
-                setDirectSent(false);
               }}
               placeholder={`Write a message to @${composeTo}…`}
               style={{
@@ -278,14 +337,6 @@ export default function SingleChatPage({ roomId, username }: SingleChatPageProps
                 fontSize: 13,
               }}
             />
-            {directSent && (
-              <p
-                role="status"
-                style={{ margin: "8px 0 0", color: "#c5f36a", fontSize: 11 }}
-              >
-                Message sent to @{composeTo}.
-              </p>
-            )}
             {composeTo.toLowerCase() === session.username.toLowerCase() && (
               <p style={{ margin: "8px 0 0", color: "#969d8e", fontSize: 11 }}>
                 This is your account, so a direct message can’t be sent to it.
@@ -349,24 +400,37 @@ export default function SingleChatPage({ roomId, username }: SingleChatPageProps
                 <Avatar name={message.sender} small />
                 <div className="message-content">
                   <div className="message-byline">
-                    {message.sender === session.username && !roomId ? (
+                    {message.sender === session.username ? (
                       <strong>You</strong>
                     ) : (
-                      <button
-                        type="button"
-                        className="message-user-link"
-                        aria-label={`Send a direct message to ${message.sender}`}
-                        aria-haspopup="dialog"
-                        title={`Message @${message.sender}`}
-                        onClick={() => openMessagePopup(message.sender)}
-                        style={{
-                          cursor: "pointer",
-                          textDecoration: "underline",
-                          textUnderlineOffset: 3,
-                        }}
-                      >
-                        {message.sender}
-                      </button>
+                      (
+                        <span className="message-user-menu-wrap">
+                          <button
+                            type="button"
+                            className="message-user-link"
+                            aria-label={`Actions for ${message.sender}`}
+                            aria-haspopup="menu"
+                            aria-expanded={openUserMenu === message.id}
+                            title={`Actions for @${message.sender}`}
+                            onClick={() => setOpenUserMenu((current) => current === message.id ? null : message.id)}
+                          >
+                            {message.sender}
+                          </button>
+                          {openUserMenu === message.id && (
+                            <div className="message-user-menu" role="menu" aria-label={`Actions for ${message.sender}`}>
+                              <button type="button" role="menuitem" onClick={() => {
+                                setOpenUserMenu(null);
+                                openMessagePopup(message.sender);
+                              }}>
+                                Direct message
+                              </button>
+                              <button type="button" role="menuitem" onClick={() => void block(message.sender)}>
+                                Block User
+                              </button>
+                            </div>
+                          )}
+                        </span>
+                      )
                     )}
                     <time>
                       {new Date(message.created_at).toLocaleTimeString([], {

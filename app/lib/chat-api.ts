@@ -25,7 +25,16 @@ export function extractUsernames(payload: unknown): string[] {
   });
   if (!payload || typeof payload !== "object") return [];
   const record = payload as Record<string, unknown>;
-  for (const key of ["users", "results", "data", "items"]) {
+  for (const key of [
+    "users",
+    "results",
+    "data",
+    "items",
+    "blocks",
+    "blocked",
+    "blocked_users",
+    "blockedUsers",
+  ]) {
     const names = extractUsernames(record[key]);
     if (names.length) return names;
   }
